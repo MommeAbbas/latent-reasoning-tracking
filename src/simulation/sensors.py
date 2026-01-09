@@ -27,6 +27,8 @@ def _log_gaussian_diag(y: np.ndarray, mu: np.ndarray, var: np.ndarray) -> float:
 
 @dataclass
 class SensorConfig:
+    obs_dim: int = 3
+
     # Base (inlier) Gaussian noise std per sensor dimension
     noise_std: tuple = (0.05, 0.05, 0.05)
 
@@ -39,27 +41,48 @@ class SensorConfig:
 
 class ReasoningSensors:
     """
-    Observation model for latent reasoning state x = [p, c, u].
+    Observation model for latent reasoning state x (dumension d).
 
     Deterministic observation h(x):
-      y1 = p
-      y2 = c - u
-      y3 = u^2
+        y1 = p
+        y2 = c - u
+        y3 = u^2
 
-    Noise model (for likelihood/inference):
-      mixture of diagonal Gaussians: inlier + outlier
+    Only the first three latent components are observed.
+    Additional latent dimensions (if any) are hidden.
     """
 
     def __init__(self, config: SensorConfig = SensorConfig()):
         self.cfg = config
+        
+        if self.cfg.obs_dim != 3:
+            raise ValueError("This sensor model assumes obs_dim = 3.")
+        
+        if len(self.cfg.noise_std) != self.cfg.obs_dim:
+            raise ValueError(
+                f"noise_std must have length {self.cfg.obs_dim}, "
+                f"got {len(self.cfg.noise_std)}"
+            )
+
         if not (0.0 <= self.cfg.outlier_prob < 1.0):
             raise ValueError("outlier_prob must be in [0, 1).")
+        
         if self.cfg.outlier_scale < 1.0:
             raise ValueError("outlier_scale must be >= 1.0.")
 
     def h(self, x: np.ndarray) -> np.ndarray:
-        """Deterministic sensor mapping h(x)."""
-        p, c, u = x
+        """
+        Deterministic sensor mapping h(x).
+        
+        Uses only the first three latent dimensions:
+            x[0] = p
+            x[1] = c
+            x[2] = u
+        """
+        if x.shape[0] < 3:
+            raise ValueError("Latent state x must have dimension >= 3.")
+
+        p, c, u = x[0], x[1], x[2]
         return np.array([p, c - u, u ** 2], dtype=float)
 
     def observe(self, x: np.ndarray) -> np.ndarray:
@@ -76,7 +99,7 @@ class ReasoningSensors:
         else:
             std = std_in
 
-        y = mu + np.random.randn(3) * std
+        y = mu + np.random.randn(self.cfg.obs_dim) * std
 
         if self.cfg.clip_observation:
             y = np.clip(y, 0.0, 1.0)

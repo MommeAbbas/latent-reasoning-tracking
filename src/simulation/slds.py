@@ -18,6 +18,7 @@ class SLDSConfig:
     delta: float = 0.05
     eta: float = 0.05
     lam: float = 0.2
+    state_dim: int = 3
 
     # Mode-dependent additive impulses (event-like effects)
     # These are applied in addition to the smooth drift
@@ -56,6 +57,7 @@ class SLDSDynamics:
     def __init__(self, config: SLDSConfig = SLDSConfig()):
         self.cfg = config
         self._validate_P(self.cfg.P)
+        self._validate_shapes()
 
     @staticmethod
     def _validate_P(P: np.ndarray):
@@ -67,6 +69,18 @@ class SLDSDynamics:
         if np.any(P < 0):
             raise ValueError("Transition matrix P must have nonnegative entries")
 
+    def _validate_shapes(self):
+        d = self.cfg.state_dim
+
+        if len(self.cfg.noise_std) != d:
+            raise ValueError(f"noise_std must have length {d}")
+
+        if self.cfg.insight_impulse.shape != (d,):
+            raise ValueError(f"insight_impulse must have shape ({d},)")
+
+        if self.cfg.backtrack_impulse.shape != (d,):
+            raise ValueError(f"backtrack_impulse must have shape ({d},)")
+    
     def drift(self, x: np.ndarray) -> np.ndarray:
         """Smooth drift g(x) shared across modes"""
         p, c, u = x
@@ -81,7 +95,7 @@ class SLDSDynamics:
             return self.cfg.insight_impulse
         if z == Mode.BACKTRACK:
             return self.cfg.backtrack_impulse
-        return np.zeros(3, dtype=float)
+        return np.zeros(self.cfg.state_dim, dtype=float)
 
     def sample_next_mode(self, z: Mode) -> Mode:
         """Sample z_{k+1} ~ P(z_{k+1} | z_k)"""
@@ -96,12 +110,14 @@ class SLDSDynamics:
           x_{k+1} = x_k + drift(x_k) + impulse(z_{k+1}) + noise
         Note: impulse is applied for the new mode (interpretable as entering that regime)
         """
+        d = self.cfg.state_dim
+
         z_next = self.sample_next_mode(z)
 
         x_next = x + self.drift(x)
         x_next = x_next + self.mode_impulse(z_next)
 
-        noise = np.random.randn(3) * np.array(self.cfg.noise_std, dtype=float)
+        noise = np.random.randn(d) * np.array(self.cfg.noise_std, dtype=float)
         x_next = x_next + noise
 
         if self.cfg.clip_state:
@@ -117,6 +133,8 @@ class SLDSSimulator:
         self.dyn = dynamics
 
     def run(self, T: int, x0=None, z0: Mode = Mode.NORMAL):
+        d = self.dyn.cfg.state_dim
+
         if x0 is None:
             x = np.array([0.2, 0.5, 0.8], dtype=float)
         else:
@@ -124,7 +142,7 @@ class SLDSSimulator:
 
         z = Mode(int(z0))
 
-        xs = np.zeros((T + 1, 3), dtype=float)
+        xs = np.zeros((T + 1, d), dtype=float)
         zs = np.zeros((T + 1,), dtype=int)
 
         xs[0] = x

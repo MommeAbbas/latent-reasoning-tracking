@@ -35,12 +35,12 @@ class PF_SLDS:
 
     Particles carry:
       - discrete mode z
-      - continuous state x
+      - continuous state x (dimension d)
 
     Update:
-      - sample z_{k+1} ~ P(.|z_k)
-      - propagate x_{k+1} = x_k + drift(x_k) + impulse(z_{k+1}) + noise
-      - weight by robust log-likelihood log p(y|x_pred)
+      - sample z_{k+1}
+      - propagate x
+      - weight by robust log-likelihood
       - resample if ESS low
     """
 
@@ -50,12 +50,18 @@ class PF_SLDS:
         self.cfg = cfg
         self.N = cfg.num_particles
 
+        d = self.dyn.cfg.state_dim
+
         self.weights = np.ones(self.N, dtype=float) / self.N
         self.modes = np.full(self.N, int(Mode.NORMAL), dtype=int)
 
-        mean = np.array(cfg.init_mean, dtype=float)
-        std = np.array(cfg.init_std, dtype=float)
-        self.xs = mean + np.random.randn(self.N, 3) * std
+        mean = np.zeros(d, dtype=float)
+        std = np.zeros(d, dtype=float)
+
+        mean[:3] = np.array(cfg.init_mean, dtype=float)
+        std[:3] = np.array(cfg.init_std, dtype=float)
+        
+        self.xs = mean + np.random.randn(self.N, d) * std
 
         if self.dyn.cfg.clip_state:
             self.xs = np.clip(self.xs, 0.0, 1.0)
@@ -65,6 +71,7 @@ class PF_SLDS:
 
     def step(self, y: np.ndarray):
         y = np.asarray(y, dtype=float)
+        d = self.dyn.cfg.state_dim
 
         # 1) sample next modes
         new_modes = np.zeros_like(self.modes)
@@ -83,7 +90,7 @@ class PF_SLDS:
             x = self.xs[i]
             x_pred = x + self.dyn.drift(x) + self.dyn.mode_impulse(z_next)
 
-            noise = np.random.randn(3) * np.array(self.dyn.cfg.noise_std, dtype=float)
+            noise = np.random.randn(d) * np.array(self.dyn.cfg.noise_std, dtype=float)
             x_pred = x_pred + noise
 
             if self.dyn.cfg.clip_state:

@@ -38,11 +38,21 @@ class EKFBaseline:
         self.sensors = sensors
         self.cfg = cfg
 
-        self.mu = np.array(cfg.init_mean, dtype=float)
-        self.Sigma = np.diag(np.array(cfg.init_cov_diag, dtype=float) ** 2)
+        self.d = int(self.dyn.cfg.state_dim)
 
-        self.Q = np.diag(np.array(self.dyn.cfg.noise_std, dtype=float) ** 2)
-        self.R = np.diag(np.array(self.sensors.cfg.noise_std, dtype=float) ** 2)
+        self.mu = np.zeros(self.d, dtype=float)
+        self.mu[:3] = np.array(cfg.init_mean, dtype=float)
+        
+        self.Sigma = np.zeros((self.d, self.d), dtype=float)
+        self.Sigma[:3, :3] = np.diag(np.array(cfg.init_cov_diag, dtype=float) ** 2)
+
+        Q = np.zeros((self.d, self.d), dtype=float)
+        q_diag = np.array(self.dyn.cfg.noise_std, dtype=float) ** 2
+        Q[: len(q_diag), : len(q_diag)] = np.diag(q_diag)
+        self.Q = Q
+
+        r_diag = np.array(self.sensors.cfg.noise_std, dtype=float) ** 2
+        self.R = np.diag(r_diag)
 
     def predict(self):
         # f(x) = x + drift(x)
@@ -72,7 +82,7 @@ class EKFBaseline:
         K = self.Sigma @ H.T @ np.linalg.inv(S)
 
         self.mu = self.mu + K @ (y - y_pred)
-        self.Sigma = (np.eye(3) - K @ H) @ self.Sigma
+        self.Sigma = (np.eye(self.d) - K @ H) @ self.Sigma
 
         if self.dyn.cfg.clip_state:
             self.mu = np.clip(self.mu, 0.0, 1.0)

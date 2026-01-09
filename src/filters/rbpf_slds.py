@@ -82,13 +82,19 @@ class RBPF_SLDS:
         self.cfg = cfg
 
         self.N = cfg.num_particles
+        self.d = int(self.dyn.cfg.state_dim)
+        self.m = int(self.sensors.cfg.obs_dim)
 
         self.weights = np.ones(self.N, dtype=float) / self.N
         self.modes = np.full(self.N, int(Mode.NORMAL), dtype=int)
 
-        self.mus = np.tile(np.array(cfg.init_mean, dtype=float), (self.N, 1))
-        self.Sigmas = np.zeros((self.N, 3, 3), dtype=float)
-        init_cov = np.diag(np.array(cfg.init_cov_diag, dtype=float) ** 2)
+        init_mu = np.zeros(self.d, dtype=float)
+        init_mu[:3] = np.array(cfg.init_mean, dtype=float)
+        self.mus = np.tile(init_mu, (self.N, 1))
+        
+        self.Sigmas = np.zeros((self.N, self.d, self.d), dtype=float)
+        init_cov = np.zeros((self.d, self.d), dtype=float)
+        init_cov[:3, :3] = np.diag(np.array(cfg.init_cov_diag, dtype=float) ** 2)
         for i in range(self.N):
             self.Sigmas[i] = init_cov
 
@@ -127,12 +133,12 @@ class RBPF_SLDS:
         K = Sigma_pred @ H.T @ np.linalg.inv(S)
 
         mu_upd = mu_pred + K @ (y - y_pred)
-        Sigma_upd = (np.eye(3) - K @ H) @ Sigma_pred
+        Sigma_upd = (np.eye(self.d) - K @ H) @ Sigma_pred
 
         if self.dyn.cfg.clip_state:
             mu_upd = np.clip(mu_upd, 0.0, 1.0)
 
-        return mu_upd, Sigma_upd, y_pred, H, S
+        return mu_upd, Sigma_upd, y_pred, S
 
     def step(self, y: np.ndarray):
         y = np.asarray(y, dtype=float)
@@ -155,7 +161,7 @@ class RBPF_SLDS:
             mu_pred, Sigma_pred = self._predict_particle(self.mus[i], self.Sigmas[i], z_next)
 
             # EKF-style measurement update for mu/Sigma
-            mu_upd, Sigma_upd, y_pred, H, S = self._update_particle(mu_pred, Sigma_pred, y)
+            mu_upd, Sigma_upd, y_pred, S = self._update_particle(mu_pred, Sigma_pred, y)
 
             new_mus[i] = mu_upd
             new_Sigmas[i] = Sigma_upd

@@ -22,15 +22,14 @@ def numerical_jacobian(f, x, eps=1e-5):
 @dataclass
 class EKFConfig:
     init_mean: tuple = (0.2, 0.5, 0.8)
-    init_cov_diag: tuple = (0.02, 0.02, 0.02)
+    init_cov_diag: tuple = (0.02, 0.02, 0.02, 0.05, 0.06)
 
 
 class EKFBaseline:
     """
-    EKF baseline: continuous-only nonlinear state estimation.
-
-    Uses SLDS drift ONLY (no switching modes, no impulses).
-    Observation model is the same ReasoningSensors.h(x).
+    EKF baseline continuous-only nonlinear state estimation
+    Uses SLDS drift only (no switching modes or impulses)
+    Observation model is the same ReasoningSensors.h(x)
     """
 
     def __init__(self, dyn: SLDSDynamics, sensors: ReasoningSensors, cfg: EKFConfig = EKFConfig()):
@@ -42,9 +41,14 @@ class EKFBaseline:
 
         self.mu = np.zeros(self.d, dtype=float)
         self.mu[:3] = np.array(cfg.init_mean, dtype=float)
+        if self.d > 3:
+            self.mu[3] = 0.15
+        if self.d > 4:
+            self.mu[4] = 0.2
         
         self.Sigma = np.zeros((self.d, self.d), dtype=float)
-        self.Sigma[:3, :3] = np.diag(np.array(cfg.init_cov_diag, dtype=float) ** 2)
+        init_cov = np.array(cfg.init_cov_diag, dtype=float) ** 2
+        self.Sigma[: len(init_cov), : len(init_cov)] = np.diag(init_cov)
 
         Q = np.zeros((self.d, self.d), dtype=float)
         q_diag = np.array(self.dyn.cfg.noise_std, dtype=float) ** 2

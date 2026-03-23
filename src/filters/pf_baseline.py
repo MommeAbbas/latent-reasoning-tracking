@@ -26,22 +26,14 @@ class PFConfig:
     num_particles: int = 2000
     resample_threshold: float = 0.5
     init_mean: Tuple[float, float, float] = (0.2, 0.5, 0.8)
-    init_std: Tuple[float, float, float] = (0.05, 0.05, 0.05)
+    init_std: Tuple[float, float, float, float, float] = (0.05, 0.05, 0.05, 0.08, 0.1)
 
 
 class PF_SLDS:
     """
-    Plain Particle Filter for SLDS (no Rao-Blackwellization).
+    Baseline Particle Filter for SLDS
+    Particles carry discrete mode z and continuous state x (dimension d)
 
-    Particles carry:
-      - discrete mode z
-      - continuous state x (dimension d)
-
-    Update:
-      - sample z_{k+1}
-      - propagate x
-      - weight by robust log-likelihood
-      - resample if ESS low
     """
 
     def __init__(self, dyn: SLDSDynamics, sensors: ReasoningSensors, cfg: PFConfig = PFConfig()):
@@ -59,7 +51,13 @@ class PF_SLDS:
         std = np.zeros(d, dtype=float)
 
         mean[:3] = np.array(cfg.init_mean, dtype=float)
-        std[:3] = np.array(cfg.init_std, dtype=float)
+        std[:3] = np.array(cfg.init_std[:3], dtype=float)
+        if d > 3:
+            mean[3] = 0.15
+            std[3] = cfg.init_std[3]
+        if d > 4:
+            mean[4] = 0.2
+            std[4] = cfg.init_std[4]
         
         self.xs = mean + np.random.randn(self.N, d) * std
 
@@ -73,14 +71,14 @@ class PF_SLDS:
         y = np.asarray(y, dtype=float)
         d = self.dyn.cfg.state_dim
 
-        # 1) sample next modes
+        # sample next modes
         new_modes = np.zeros_like(self.modes)
         for i in range(self.N):
             z = Mode(int(self.modes[i]))
             z_next = self.dyn.sample_next_mode(z)
             new_modes[i] = int(z_next)
 
-        # 2) propagate continuous states using the true simulator dynamics step (but without sampling z inside)
+        # propagate continuous states using the true simulator dynamics step (but without sampling z inside)
         new_xs = np.zeros_like(self.xs)
         logw = np.zeros(self.N, dtype=float)
 
@@ -88,7 +86,7 @@ class PF_SLDS:
             z_next = Mode(int(new_modes[i]))
 
             x = self.xs[i]
-            x_pred = x + self.dyn.drift(x) + self.dyn.mode_impulse(z_next)
+            x_pred = self.dyn.transition_mean(x, z_next)
 
             noise = np.random.randn(d) * np.array(self.dyn.cfg.noise_std, dtype=float)
             x_pred = x_pred + noise
@@ -98,10 +96,10 @@ class PF_SLDS:
 
             new_xs[i] = x_pred
 
-            # robust likelihood weight
+            # likelihood weight
             logw[i] = self.sensors.log_likelihood(y, x_pred)
 
-        # 3) normalize weights
+        # normalize weights
         logw = logw - np.max(logw)
         w = np.exp(logw) * self.weights
         w_sum = np.sum(w)
@@ -114,7 +112,7 @@ class PF_SLDS:
         self.modes = new_modes
         self.xs = new_xs
 
-        # 4) resample
+        # resample
         ess = self.effective_sample_size()
         if ess / self.N < self.cfg.resample_threshold:
             idx = systematic_resample(self.weights)

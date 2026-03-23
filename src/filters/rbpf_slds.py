@@ -8,7 +8,7 @@ from src.simulation.sensors import ReasoningSensors
 
 def numerical_jacobian(f, x, eps=1e-5):
     """
-    Numerical Jacobian of f at x.
+    Numerical Jacobian of f at x
     f: R^n -> R^m
     Returns J of shape (m, n)
     """
@@ -26,7 +26,9 @@ def numerical_jacobian(f, x, eps=1e-5):
 
 
 def systematic_resample(weights: np.ndarray) -> np.ndarray:
-    """Systematic resampling. Returns indices."""
+    """
+    Systematic resampling and returns indices
+    """
     N = len(weights)
     positions = (np.random.rand() + np.arange(N)) / N
     cum = np.cumsum(weights)
@@ -41,7 +43,9 @@ def systematic_resample(weights: np.ndarray) -> np.ndarray:
     return idx
 
 def log_gaussian_full(y: np.ndarray, mu: np.ndarray, S: np.ndarray) -> float:
-    """Log N(y; mu, S) for full covariance S."""
+    """
+    Log N(y; mu, S) for full covariance S
+    """
     y = np.asarray(y, dtype=float)
     mu = np.asarray(mu, dtype=float)
     S = np.asarray(S, dtype=float)
@@ -57,23 +61,23 @@ def log_gaussian_full(y: np.ndarray, mu: np.ndarray, S: np.ndarray) -> float:
 @dataclass
 class RBPFConfig:
     num_particles: int = 200
-    resample_threshold: float = 0.5  # resample when ESS/N < threshold
+    resample_threshold: float = 0.5
     init_mean: Tuple[float, float, float] = (0.2, 0.5, 0.8)
-    init_cov_diag: Tuple[float, float, float] = (0.02, 0.02, 0.02)
+    init_cov_diag: Tuple[float, float, float, float, float] = (0.02, 0.02, 0.02, 0.05, 0.06)
 
 
 class RBPF_SLDS:
     """
     Rao-Blackwellized Particle Filter for SLDS:
-      - particles sample discrete mode z_k
-      - each particle maintains Gaussian belief over continuous x_k (mu, Sigma)
-
-    We use an EKF-style Gaussian update with:
-      mu_pred = mu + drift(mu) + impulse(z)   (noise modeled in Q)
-      Sigma_pred = F Sigma F^T + Q
-    And measurement update with:
-      y = h(x) + v   (we approximate with a Gaussian using Jacobian H)
-    Particle weights updated using robust sensors.log_likelihood(y | mu_pred).
+        particles sample discrete mode z_k
+        each particle maintains Gaussian belief over continuous x_k (mu, Sigma)
+    EKF-style Gaussian update:
+        mu_pred = mu + drift(mu) + impulse(z)   (noise modeled in Q)
+        Sigma_pred = F Sigma F^T + Q
+    measurement update:
+        y = h(x) + v   (we approximate with a Gaussian using Jacobian H)
+    Particle weights updated:
+        sensors.log_likelihood(y | mu_pred)
     """
 
     def __init__(self, dyn: SLDSDynamics, sensors: ReasoningSensors, cfg: RBPFConfig = RBPFConfig()):
@@ -90,11 +94,16 @@ class RBPF_SLDS:
 
         init_mu = np.zeros(self.d, dtype=float)
         init_mu[:3] = np.array(cfg.init_mean, dtype=float)
+        if self.d > 3:
+            init_mu[3] = 0.15
+        if self.d > 4:
+            init_mu[4] = 0.2
         self.mus = np.tile(init_mu, (self.N, 1))
         
         self.Sigmas = np.zeros((self.N, self.d, self.d), dtype=float)
         init_cov = np.zeros((self.d, self.d), dtype=float)
-        init_cov[:3, :3] = np.diag(np.array(cfg.init_cov_diag, dtype=float) ** 2)
+        init_diag = np.array(cfg.init_cov_diag, dtype=float) ** 2
+        init_cov[: len(init_diag), : len(init_diag)] = np.diag(init_diag)
         for i in range(self.N):
             self.Sigmas[i] = init_cov
 
@@ -106,13 +115,12 @@ class RBPF_SLDS:
     def _predict_particle(self, mu, Sigma, z_next: Mode):
         # Define transition f_z(x) = x + drift(x) + impulse(z_next)
         def fz(x):
-            return x + self.dyn.drift(x) + self.dyn.mode_impulse(z_next)
+            return self.dyn.transition_mean(x, z_next)
 
         mu_pred = fz(mu)
         F = numerical_jacobian(fz, mu)
         Sigma_pred = F @ Sigma @ F.T + self.Q
 
-        # optional clipping of mean (keeps state interpretable; covariance unchanged)
         if self.dyn.cfg.clip_state:
             mu_pred = np.clip(mu_pred, 0.0, 1.0)
 
@@ -143,14 +151,14 @@ class RBPF_SLDS:
     def step(self, y: np.ndarray):
         y = np.asarray(y, dtype=float)
 
-        # 1) sample new modes for each particle
+        # sample new modes for each particle
         new_modes = np.zeros_like(self.modes)
         for i in range(self.N):
             z = Mode(int(self.modes[i]))
             z_next = self.dyn.sample_next_mode(z)
             new_modes[i] = int(z_next)
 
-        # 2) predict + update Gaussian state per particle
+        # predict + update Gaussian state per particle
         new_mus = np.zeros_like(self.mus)
         new_Sigmas = np.zeros_like(self.Sigmas)
 
@@ -166,24 +174,23 @@ class RBPF_SLDS:
             new_mus[i] = mu_upd
             new_Sigmas[i] = Sigma_upd
 
-            # Robust-ish weighting: mixture of Gaussians with inflated covariance for outliers
+            # mixture of Gaussians with inflated covariance for outliers
             eps = max(self.sensors.cfg.outlier_prob, 1e-12)
             scale = self.sensors.cfg.outlier_scale
 
             log_in = np.log(1.0 - eps) + log_gaussian_full(y, y_pred, S)
             log_out = np.log(eps) + log_gaussian_full(y, y_pred, S * scale)
 
-            # stable logsumexp for two terms
             m = max(log_in, log_out)
             logw[i] = m + np.log(np.exp(log_in - m) + np.exp(log_out - m))
 
 
-        # 3) normalize weights
+        # normalize weights
         logw = logw - np.max(logw)  # stability
         w = np.exp(logw) * self.weights
         w_sum = np.sum(w)
         if w_sum <= 0 or not np.isfinite(w_sum):
-            # fallback: reset weights
+            # fallback reset weights
             w = np.ones(self.N, dtype=float) / self.N
         else:
             w = w / w_sum
@@ -193,7 +200,7 @@ class RBPF_SLDS:
         self.mus = new_mus
         self.Sigmas = new_Sigmas
 
-        # 4) resample if degeneracy
+        # resample if degeneracy
         ess = self.effective_sample_size()
         if ess / self.N < self.cfg.resample_threshold:
             idx = systematic_resample(self.weights)

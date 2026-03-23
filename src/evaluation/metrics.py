@@ -4,8 +4,8 @@ from sklearn.metrics import roc_auc_score
 
 def negative_log_likelihood(p_hat, y_true, eps=1e-12):
     """
-    p_hat: array of predicted probabilities in (0,1)
-    y_true: array of binary labels {0,1}
+    p_hat is array of predicted probabilities in (0,1)
+    y_true is array of binary labels {0,1}
     """
     p_hat = np.clip(p_hat, eps, 1.0 - eps)
     y_true = np.asarray(y_true, dtype=float)
@@ -21,9 +21,6 @@ def brier_score(p_hat, y_true):
 
 
 def expected_calibration_error(p_hat, y_true, n_bins=10):
-    """
-    Standard ECE with equal-width bins.
-    """
     p_hat = np.asarray(p_hat, dtype=float)
     y_true = np.asarray(y_true, dtype=float)
 
@@ -43,8 +40,8 @@ def expected_calibration_error(p_hat, y_true, n_bins=10):
 
 def auc_by_prefix(predictions, labels):
     """
-    predictions: list of arrays, one per prefix length k
-    labels: binary labels per trajectory
+    predictions are list of arrays, one per prefix length k
+    labels are binary labels per trajectory
     """
     aucs = []
     for p_k in predictions:

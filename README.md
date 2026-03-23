@@ -32,11 +32,11 @@ The RBPF partitions the problem by sampling discrete modes while analytically tr
 
 ## Implementation
 
-* **src/filters/**: Core implementations of the RBPF, standard Particle Filter, and EKF baselines.
+* `src/filters/`: Core implementations of the RBPF, standard Particle Filter, and EKF baselines.
 
-* **src/simulation/**: SLDS dynamics and Reasoning Sensors (Hidden Accumulator Model).
+* `src/simulation/`: SLDS dynamics and Reasoning Sensors (Hidden Accumulator Model).
 
-* **src/evaluation/**: Online correctness predictors and metric recorders.
+* `src/evaluation/`: Online correctness predictors and metric recorders.
 
 ## Reproduction
 
@@ -62,6 +62,6 @@ python -m src.evaluation.plot_particle_scaling.py
 
 ## Paper
 
-For a full description of the model, mathematical derivations, and detailed experimental results, see **paper.pdf**.
+For a full description of the model, mathematical derivations, and detailed experimental results, see `paper.pdf`.
 
 

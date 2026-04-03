@@ -80,8 +80,10 @@ def run_ablation_seed(seed: int, true_dyn, sensors, predictor):
     labels_list = []
     all_ys = []       # for LR
 
+    X0 = np.array([0.2, 0.5, 0.8, 0.2, 0.1])
+
     for n in range(N_TRAJ):
-        xs, zs = SLDSSimulator(true_dyn).run(T=T)
+        xs, zs = SLDSSimulator(true_dyn).run(T=T, x0=X0)
         label  = compute_label(xs, zs)
         labels_list.append(label)
 

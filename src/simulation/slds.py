@@ -115,6 +115,64 @@ class SLDSDynamics:
             x_next = np.clip(x_next, 0.0, 1.0)
         return x_next, z_next
 
+# ---------------------------------------------------------------------------
+# Ablation factory functions
+# ---------------------------------------------------------------------------
+
+def make_no_rotation_dynamics(base_cfg: SLDSConfig = None) -> "SLDSDynamics":
+    """
+    Returns an SLDSDynamics where _get_mode_rotation always returns the
+    identity matrix, making INSIGHT and BACKTRACK structurally indistinguishable
+    in the observation space (ablates the rotation component).
+    """
+    cfg = base_cfg if base_cfg is not None else SLDSConfig()
+
+    class _NoRotDynamics(SLDSDynamics):
+        def _get_mode_rotation(self, z: Mode) -> np.ndarray:
+            return np.eye(self.cfg.state_dim)
+
+    return _NoRotDynamics(cfg)
+
+
+def make_two_mode_dynamics(base_cfg: SLDSConfig = None) -> "SLDSDynamics":
+    """
+    Returns an SLDSDynamics that only uses NORMAL and INSIGHT modes.
+    BACKTRACK transitions are redirected to NORMAL, effectively removing
+    the backtracking mode from the system.
+    """
+    import copy
+    cfg = copy.deepcopy(base_cfg) if base_cfg is not None else SLDSConfig()
+
+    # Redirect all BACKTRACK probability mass to NORMAL
+    # Row 2 (from BACKTRACK): goes to NORMAL with p=1
+    cfg.P[2, :] = [1.0, 0.0, 0.0]
+    # Column 2 (to BACKTRACK): move that mass to NORMAL
+    cfg.P[:, 0] += cfg.P[:, 2]
+    cfg.P[:, 2]  = 0.0
+    # Re-normalise each row
+    cfg.P = cfg.P / cfg.P.sum(axis=1, keepdims=True)
+
+    class _TwoModeDynamics(SLDSDynamics):
+        def mode_drift(self, z: Mode, x: np.ndarray) -> np.ndarray:
+            dx = np.zeros(self.cfg.state_dim, dtype=float)
+            if z == Mode.INSIGHT:
+                dx[0] = 0.25
+            # BACKTRACK treated as NORMAL (no special drift)
+            return dx
+
+        def _get_mode_rotation(self, z: Mode) -> np.ndarray:
+            R = np.eye(self.cfg.state_dim)
+            if z == Mode.INSIGHT:
+                theta = 0.30
+                i, j = 1, 2
+                c, s = np.cos(theta), np.sin(theta)
+                R[i, i] = c; R[i, j] = -s
+                R[j, i] = s; R[j, j] =  c
+            return R
+
+    return _TwoModeDynamics(cfg)
+
+
 class SLDSSimulator:
     def __init__(self, dynamics: SLDSDynamics):
         self.dyn = dynamics

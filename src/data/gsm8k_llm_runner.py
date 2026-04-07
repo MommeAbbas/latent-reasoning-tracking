@@ -1,6 +1,10 @@
 """
-Runs a small open-source LLM on GSM8K problems, extracts per-step features
+Runs an open-source LLM on GSM8K problems, extracts per-step features
 from model logits, and saves the results to src/data/.
+
+Default model: DeepSeek-R1-Distill-Qwen-1.5B (structured chain-of-thought,
+reasoning steps map cleanly to SLDS modes).  Qwen/Qwen2.5-Math-1.5B-Instruct
+also works; pass via --model.
 
 Features (all derived from model internals, not surface text):
   y[t, 0]  token entropy       — mean entropy of next-token distribution per step
@@ -27,7 +31,7 @@ import numpy as np
 from datasets import load_dataset
 from src.data.llm_feature_extractor import FeatureNormalizer
 
-DEFAULT_MODEL      = "Qwen/Qwen2.5-Math-1.5B-Instruct"
+DEFAULT_MODEL      = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
 MAX_T              = 40
 MIN_T              = 2
 OUT_DIR            = os.path.dirname(__file__)
@@ -55,7 +59,10 @@ def _is_correct(gold, pred, tol: float = 1e-3) -> int:
     return int(abs(gold - pred) <= tol)
 
 def _split_into_steps(text: str):
-    raw = [s.strip() for s in text.split("\n") if s.strip()]
+    # DeepSeek-R1 wraps reasoning in <think>...</think>; extract contents
+    think_match = re.search(r"<think>(.*?)</think>", text, re.DOTALL)
+    body = think_match.group(1) if think_match else text
+    raw = [s.strip() for s in body.split("\n") if s.strip()]
     return raw if raw else [text.strip()]
 
 
@@ -144,9 +151,12 @@ def run(model_name: str = DEFAULT_MODEL, n_problems: int = N_PROBLEMS_DEFAULT):
     print("[gsm8k_llm_runner] Loading GSM8K ...")
     dataset = load_dataset("openai/gsm8k", "main", split="test")
 
+    # DeepSeek-R1 and Qwen math models both respond well to this format
     prompt_template = (
-        "Solve the following math problem step by step.\n\n"
-        "Problem: {question}\n\nSolution:"
+        "<|im_start|>user\n"
+        "Solve the following math problem. Show your reasoning step by step.\n\n"
+        "{question}<|im_end|>\n"
+        "<|im_start|>assistant\n"
     )
 
     all_features, all_labels, all_lengths = [], [], []

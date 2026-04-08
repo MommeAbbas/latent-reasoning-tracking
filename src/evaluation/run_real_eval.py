@@ -18,6 +18,8 @@ Prints Table 2 rows (mean ± std over N_SEEDS shuffles).
 """
 
 import gc
+import os
+import csv
 import numpy as np
 
 from src.simulation.slds  import SLDSConfig, SLDSDynamics
@@ -219,6 +221,20 @@ def main():
             f"   {ff.mean():.3f}±{ff.std():.3f}"
             f"  GSM8K real{supervised}"
         )
+
+    # Save results to CSV
+    os.makedirs("tables", exist_ok=True)
+    csv_path = "tables/real_llm_results.csv"
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["method", "seed", "auc_final", "auc_early"])
+        for name in variant_names:
+            for i, (af, ae) in enumerate(zip(
+                all_results[name]["auc_final"],
+                all_results[name]["auc_early"],
+            )):
+                writer.writerow([name, i, f"{af:.4f}", f"{ae:.4f}"])
+    print(f"\n[run_real_eval] Saved → {csv_path}")
 
 
 if __name__ == "__main__":

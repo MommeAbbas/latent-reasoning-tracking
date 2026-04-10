@@ -1,6 +1,17 @@
+# Core scientific stack
 numpy>=1.26.0,<2.2.0
 matplotlib>=3.7.0
 scikit-learn>=1.3.0
 scipy>=1.11.0
 tqdm>=4.65.0
+
+# Data loading (GSM8K dataset)
 datasets>=2.14.0
+
+# Parallelism (used in Colab ROC figure)
+joblib>=1.3.0
+
+# LLM inference (Section 6 only — not needed for simulation experiments)
+torch>=2.1.0
+transformers>=4.40.0
+accelerate>=0.27.0

@@ -1,17 +1,4 @@
-"""
-Logistic Regression baseline for online success prediction.
-
-Unlike the Bayesian filters, this is a *supervised* method trained on labelled
-trajectories.  It serves as a strong reference point: if the RBPF beats LR at
-early steps (k=5) without any training data, that demonstrates the value of
-the structured prior.
-
-Interface
----------
-    lr = LRBaseline(k=5, train_frac=0.7)
-    lr.fit(all_ys, all_labels)   # all_ys: list of (T_i, 3) arrays
-    probs = lr.predict(all_ys)   # np.ndarray of shape (N,)
-"""
+# Supervised LR baseline. Trains on first k obs per trajectory.
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -19,16 +6,7 @@ from typing import List
 
 
 class LRBaseline:
-    """
-    Logistic regression on the first k observations (zero-padded).
-
-    Parameters
-    ----------
-    k : int
-        Number of observation steps to use as features.
-    C : float
-        Inverse regularisation strength for LogisticRegression.
-    """
+    """LR on the first k observations, zero-padded to fixed length."""
 
     def __init__(self, k: int = 5, C: float = 1.0):
         self.k   = k
@@ -37,7 +15,6 @@ class LRBaseline:
         self._obs_dim = None
 
     def _featurise(self, ys_list: List[np.ndarray]) -> np.ndarray:
-        """Flatten first k steps of each trajectory into a feature vector."""
         obs_dim = ys_list[0].shape[1] if ys_list else 3
         self._obs_dim = obs_dim
         out = np.zeros((len(ys_list), self.k * obs_dim), dtype=float)
@@ -53,6 +30,5 @@ class LRBaseline:
         return self
 
     def predict(self, ys_list: List[np.ndarray]) -> np.ndarray:
-        """Returns predicted P(correct) for each trajectory."""
         X = self._featurise(ys_list)
         return self.clf.predict_proba(X)[:, 1]

@@ -26,11 +26,7 @@ class EKFConfig:
 
 
 class EKFBaseline:
-    """
-    EKF baseline continuous-only nonlinear state estimation
-    Uses SLDS drift only (no switching modes or impulses)
-    Observation model is the same ReasoningSensors.h(x)
-    """
+    """Single-mode EKF baseline. No switching, uses drift only."""
 
     def __init__(self, dyn: SLDSDynamics, sensors: ReasoningSensors, cfg: EKFConfig = EKFConfig()):
         self.dyn = dyn
@@ -59,7 +55,6 @@ class EKFBaseline:
         self.R = np.diag(r_diag)
 
     def predict(self):
-        # f(x) = x + drift(x)
         def f(x):
             return x + self.dyn.drift(x)
 

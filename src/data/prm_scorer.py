@@ -89,7 +89,7 @@ def run(model_name: str = DEFAULT_MODEL):
             continue
 
         with torch.no_grad():
-            output = model(**inputs)
+            output = model(**inputs, use_cache=False)
 
         # Qwen2.5-Math-PRM returns per-token scores in output.scores or logits
         # Shape: (1, seq_len, 1) or (1, seq_len, 2)

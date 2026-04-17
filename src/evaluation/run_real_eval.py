@@ -16,11 +16,19 @@ from src.data.math500_data_loader import Math500DataLoader
 from src.data import real_data_loader as _rdl_module
 
 try:
-    from sklearn.metrics import roc_auc_score
+    from sklearn.metrics import roc_auc_score, average_precision_score
     def safe_auc(y, s):
         return float(roc_auc_score(y, s)) if len(np.unique(y)) > 1 else float("nan")
+    def safe_aupr(y, s):
+        return float(average_precision_score(y, s)) if len(np.unique(y)) > 1 else float("nan")
 except ImportError:
-    def safe_auc(y, s): return float("nan")
+    def safe_auc(y, s):  return float("nan")
+    def safe_aupr(y, s): return float("nan")
+
+def brier(y, s):
+    y = np.asarray(y, dtype=float)
+    s = np.asarray(s, dtype=float)
+    return float(np.mean((s - y) ** 2))
 
 N_SEEDS   = 5
 PARTICLES = 125
@@ -124,17 +132,56 @@ def _eval_seed(seed, loader, base_dyn, sensors, prm_scores=None):
 
     me_scores = np.array(mean_entropy_scores)
 
-    results = {
-        "RBPF":         {"auc_final": safe_auc(labels, _final(preds_rbpf)),  "auc_early": safe_auc(labels, _early(preds_rbpf, EARLY_K))},
-        "EKF":          {"auc_final": safe_auc(labels, _final(preds_ekf)),   "auc_early": safe_auc(labels, _early(preds_ekf,  EARLY_K))},
-        "PF":           {"auc_final": safe_auc(labels, _final(preds_pf)),    "auc_early": safe_auc(labels, _early(preds_pf,   EARLY_K))},
-        "LR-k5":        {"auc_final": safe_auc(lr_labels, lr_k5_probs),      "auc_early": safe_auc(lr_labels, lr_k5_probs)},
-        "LR-full":      {"auc_final": safe_auc(lr_labels, lr_full_probs),    "auc_early": safe_auc(lr_labels, lr_full_probs)},
-        "MeanEntropy":  {"auc_final": safe_auc(labels, me_scores),           "auc_early": safe_auc(labels, me_scores)},
+    def _metrics(y, s):
+        return {
+            "auc_final":  safe_auc(y, s),
+            "aupr_final": safe_aupr(y, s),
+            "brier":      brier(y, s),
+        }
+    def _metrics_early(y, s_list, k):
+        s = _early(s_list, k)
+        return {
+            "auc_early":  safe_auc(y, s),
+            "aupr_early": safe_aupr(y, s),
+        }
+
+    results = {}
+    for name, plist, y in [
+        ("RBPF", preds_rbpf, labels),
+        ("EKF",  preds_ekf,  labels),
+        ("PF",   preds_pf,   labels),
+    ]:
+        results[name] = {**_metrics(y, _final(plist)), **_metrics_early(y, plist, EARLY_K)}
+
+    for name, probs, y in [
+        ("LR-k5",   lr_k5_probs,   lr_labels),
+        ("LR-full", lr_full_probs, lr_labels),
+    ]:
+        results[name] = {
+            "auc_final":  safe_auc(y, probs),
+            "aupr_final": safe_aupr(y, probs),
+            "brier":      brier(y, probs),
+            "auc_early":  safe_auc(y, probs),
+            "aupr_early": safe_aupr(y, probs),
+        }
+
+    results["MeanEntropy"] = {
+        "auc_final":  safe_auc(labels, me_scores),
+        "aupr_final": safe_aupr(labels, me_scores),
+        "brier":      brier(labels, me_scores),
+        "auc_early":  safe_auc(labels, me_scores),
+        "aupr_early": safe_aupr(labels, me_scores),
     }
+
     if prm_scores_seed is not None:
         ps = np.array(prm_scores_seed)
-        results["PRM"] = {"auc_final": safe_auc(labels, ps), "auc_early": safe_auc(labels, ps)}
+        results["PRM"] = {
+            "auc_final":  safe_auc(labels, ps),
+            "aupr_final": safe_aupr(labels, ps),
+            "brier":      brier(labels, ps),
+            "auc_early":  safe_auc(labels, ps),
+            "aupr_early": safe_aupr(labels, ps),
+        }
     return results
 
 
@@ -174,33 +221,38 @@ def main():
     variant_names = ["RBPF", "EKF", "PF", "LR-k5", "LR-full", "MeanEntropy"]
     if prm_scores is not None:
         variant_names.append("PRM")
-    all_results = {n: {"auc_final": [], "auc_early": []} for n in variant_names}
+
+    metric_keys = ["auc_final", "aupr_final", "brier", "auc_early", "aupr_early"]
+    all_results = {n: {m: [] for m in metric_keys} for n in variant_names}
 
     for seed in range(N_SEEDS):
         print(f"[run_real_eval] Seed {seed+1}/{N_SEEDS} ...")
         res = _eval_seed(seed, loader, base_dyn, sensors, prm_scores=prm_scores)
         for name in variant_names:
             if name in res:
-                all_results[name]["auc_final"].append(res[name]["auc_final"])
-                all_results[name]["auc_early"].append(res[name]["auc_early"])
+                for m in metric_keys:
+                    all_results[name][m].append(res[name].get(m, float("nan")))
 
-    print(f"\n=== {tag} Eval Results (mean ± std, 5 seeds) ===")
-    print(f"{'Method':<12} {'AUC@early':>12} {'AUC@final':>12}  Data")
-    print("-" * 55)
+    print(f"\n=== {tag} Eval Results (mean ± std, {N_SEEDS} seeds) ===")
+    print(f"{'Method':<12} {'AUC@final':>14} {'AUPR@final':>14} {'Brier':>12} {'AUC@early':>14}")
+    print("-" * 70)
     for name in variant_names:
-        ef = np.array(all_results[name]["auc_early"])
-        ff = np.array(all_results[name]["auc_final"])
-        supervised = " (supervised)" if name in ("LR-k5", "LR-full") else ""
-        print(f"{name:<12} {ef.mean():.3f}±{ef.std():.3f}   {ff.mean():.3f}±{ff.std():.3f}  {tag}{supervised}")
+        af  = np.array(all_results[name]["auc_final"])
+        apr = np.array(all_results[name]["aupr_final"])
+        br  = np.array(all_results[name]["brier"])
+        ae  = np.array(all_results[name]["auc_early"])
+        print(f"{name:<12} {af.mean():.3f}±{af.std():.3f}   {apr.mean():.3f}±{apr.std():.3f}  "
+              f"{br.mean():.3f}±{br.std():.3f}  {ae.mean():.3f}±{ae.std():.3f}")
 
     os.makedirs("tables", exist_ok=True)
     csv_path = os.path.join("tables", csv_name)
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["method", "seed", "auc_final", "auc_early"])
+        writer.writerow(["method", "seed"] + metric_keys)
         for name in variant_names:
-            for i, (af, ae) in enumerate(zip(all_results[name]["auc_final"], all_results[name]["auc_early"])):
-                writer.writerow([name, i, f"{af:.4f}", f"{ae:.4f}"])
+            for i in range(len(all_results[name]["auc_final"])):
+                row = [name, i] + [f"{all_results[name][m][i]:.4f}" for m in metric_keys]
+                writer.writerow(row)
     print(f"\n[run_real_eval] Saved -> {csv_path}")
 
 

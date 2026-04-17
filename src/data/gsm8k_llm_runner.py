@@ -143,7 +143,7 @@ def run(model_name: str = DEFAULT_MODEL, n_problems: int = N_PROBLEMS_DEFAULT):
     model     = AutoModelForCausalLM.from_pretrained(
         model_name,
         trust_remote_code=True,
-        torch_dtype=torch.float16,
+        dtype=torch.float16,
         device_map="auto",
     )
     model.eval()

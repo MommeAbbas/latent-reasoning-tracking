@@ -16,7 +16,7 @@ import os
 import re
 import numpy as np
 
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 from src.data.llm_feature_extractor import FeatureNormalizer
 from src.data.gsm8k_llm_runner import (
     _token_entropy,
@@ -76,13 +76,20 @@ def run(model_name: str = DEFAULT_MODEL, n_problems: int = N_PROBLEMS_DEFAULT):
     model     = AutoModelForCausalLM.from_pretrained(
         model_name,
         trust_remote_code=True,
-        torch_dtype=torch.float16,
+        dtype=torch.float16,
         device_map="auto",
     )
     model.eval()
 
     print("[math500_llm_runner] Loading MATH benchmark ...")
-    dataset = load_dataset("hendrycks/competition_math", split="test", trust_remote_code=True)
+    _configs = [
+        "algebra", "counting_and_probability", "geometry",
+        "intermediate_algebra", "number_theory", "prealgebra", "precalculus",
+    ]
+    dataset = concatenate_datasets([
+        load_dataset("EleutherAI/hendrycks_math", c, split="test")
+        for c in _configs
+    ])
 
     prompt_template = (
         "<|im_start|>user\n"

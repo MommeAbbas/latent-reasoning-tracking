@@ -1,3 +1,4 @@
+import argparse
 import gc
 import os
 import csv
@@ -11,6 +12,7 @@ from src.filters.pf_baseline  import PF_SLDS, PFConfig
 from src.filters.lr_baseline  import LRBaseline, LRFullBaseline
 from src.evaluation.online_prediction import OnlineCorrectnessPredictor, OnlinePredictionRecorder
 from src.data.real_data_loader import RealDataLoader
+from src.data.math500_data_loader import Math500DataLoader
 
 try:
     from sklearn.metrics import roc_auc_score
@@ -129,8 +131,22 @@ def _eval_seed(seed, loader, base_dyn, sensors):
 
 
 def main():
-    print("[run_real_eval] Loading real LLM traces ...")
-    loader = RealDataLoader(split="eval", n_eval=200)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", choices=["gsm8k", "math500"], default="gsm8k")
+    args = parser.parse_args()
+
+    if args.dataset == "math500":
+        loader     = Math500DataLoader(split="eval", n_eval=350)
+        val_loader = Math500DataLoader(split="held", n_eval=350)
+        tag        = "MATH500"
+        csv_name   = "math500_results.csv"
+    else:
+        loader     = RealDataLoader(split="eval", n_eval=200)
+        val_loader = RealDataLoader(split="held", n_eval=200)
+        tag        = "GSM8K"
+        csv_name   = "real_llm_results.csv"
+
+    print(f"[run_real_eval] Loading {tag} traces ...")
     print(f"  {len(loader)} trajectories loaded.")
     print(f"  Class balance: {loader.labels.mean()*100:.1f}% correct")
 
@@ -139,8 +155,7 @@ def main():
     d_cfg.noise_std = (0.015, 0.015, 0.015, 0.01, 0.01)
     base_dyn = SLDSDynamics(d_cfg)
 
-    print("[run_real_eval] Selecting sensor noise_std ...")
-    val_loader = RealDataLoader(split="held", n_eval=200)
+    print(f"[run_real_eval] Selecting sensor noise_std ...")
     sensors = ReasoningSensors(_select_noise_std(val_loader, base_dyn))
 
     variant_names = ["RBPF", "EKF", "PF", "LR-k5", "LR-full", "MeanEntropy"]
@@ -154,17 +169,17 @@ def main():
                 all_results[name]["auc_final"].append(res[name]["auc_final"])
                 all_results[name]["auc_early"].append(res[name]["auc_early"])
 
-    print("\n=== Real LLM Eval Results (mean ± std, 5 seeds) ===")
+    print(f"\n=== {tag} Eval Results (mean ± std, 5 seeds) ===")
     print(f"{'Method':<12} {'AUC@early':>12} {'AUC@final':>12}  Data")
     print("-" * 55)
     for name in variant_names:
         ef = np.array(all_results[name]["auc_early"])
         ff = np.array(all_results[name]["auc_final"])
-        supervised = " (supervised)" if name == "LR-k5" else ""
-        print(f"{name:<12} {ef.mean():.3f}±{ef.std():.3f}   {ff.mean():.3f}±{ff.std():.3f}  GSM8K real{supervised}")
+        supervised = " (supervised)" if name in ("LR-k5", "LR-full") else ""
+        print(f"{name:<12} {ef.mean():.3f}±{ef.std():.3f}   {ff.mean():.3f}±{ff.std():.3f}  {tag}{supervised}")
 
     os.makedirs("tables", exist_ok=True)
-    csv_path = "tables/real_llm_results.csv"
+    csv_path = os.path.join("tables", csv_name)
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["method", "seed", "auc_final", "auc_early"])

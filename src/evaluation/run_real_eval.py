@@ -30,9 +30,10 @@ def brier(y, s):
     s = np.asarray(s, dtype=float)
     return float(np.mean((s - y) ** 2))
 
-N_SEEDS   = 5
-PARTICLES = 125
-EARLY_K   = 4
+N_SEEDS    = 5
+PARTICLES  = 125
+EARLY_K    = 4
+STEP_AUCS  = [2, 4, 6, 8, 10]   # steps at which to report AUC@k
 
 
 def _select_noise_std(val_loader, base_dyn):
@@ -132,18 +133,32 @@ def _eval_seed(seed, loader, base_dyn, sensors, prm_scores=None):
 
     me_scores = np.array(mean_entropy_scores)
 
-    def _metrics(y, s):
-        return {
+    def _at_step(pred_list, k):
+        return np.array([p[min(k, len(p) - 1)] for p in pred_list])
+
+    def _filter_metrics(y, pred_list):
+        d = {
+            "auc_final":  safe_auc(y, _final(pred_list)),
+            "aupr_final": safe_aupr(y, _final(pred_list)),
+            "brier":      brier(y, _final(pred_list)),
+            "auc_early":  safe_auc(y, _early(pred_list, EARLY_K)),
+            "aupr_early": safe_aupr(y, _early(pred_list, EARLY_K)),
+        }
+        for k in STEP_AUCS:
+            d[f"auc_k{k}"] = safe_auc(y, _at_step(pred_list, k))
+        return d
+
+    def _static_metrics(y, s):
+        d = {
             "auc_final":  safe_auc(y, s),
             "aupr_final": safe_aupr(y, s),
             "brier":      brier(y, s),
-        }
-    def _metrics_early(y, s_list, k):
-        s = _early(s_list, k)
-        return {
             "auc_early":  safe_auc(y, s),
             "aupr_early": safe_aupr(y, s),
         }
+        for k in STEP_AUCS:
+            d[f"auc_k{k}"] = safe_auc(y, s)   # static: same score at every step
+        return d
 
     results = {}
     for name, plist, y in [
@@ -151,37 +166,19 @@ def _eval_seed(seed, loader, base_dyn, sensors, prm_scores=None):
         ("EKF",  preds_ekf,  labels),
         ("PF",   preds_pf,   labels),
     ]:
-        results[name] = {**_metrics(y, _final(plist)), **_metrics_early(y, plist, EARLY_K)}
+        results[name] = _filter_metrics(y, plist)
 
     for name, probs, y in [
-        ("LR-k5",   lr_k5_probs,   lr_labels),
-        ("LR-full", lr_full_probs, lr_labels),
+        ("LR-k5",      lr_k5_probs,   lr_labels),
+        ("LR-full",    lr_full_probs, lr_labels),
     ]:
-        results[name] = {
-            "auc_final":  safe_auc(y, probs),
-            "aupr_final": safe_aupr(y, probs),
-            "brier":      brier(y, probs),
-            "auc_early":  safe_auc(y, probs),
-            "aupr_early": safe_aupr(y, probs),
-        }
+        results[name] = _static_metrics(y, probs)
 
-    results["MeanEntropy"] = {
-        "auc_final":  safe_auc(labels, me_scores),
-        "aupr_final": safe_aupr(labels, me_scores),
-        "brier":      brier(labels, me_scores),
-        "auc_early":  safe_auc(labels, me_scores),
-        "aupr_early": safe_aupr(labels, me_scores),
-    }
+    results["MeanEntropy"] = _static_metrics(labels, me_scores)
 
     if prm_scores_seed is not None:
-        ps = np.array(prm_scores_seed)
-        results["PRM"] = {
-            "auc_final":  safe_auc(labels, ps),
-            "aupr_final": safe_aupr(labels, ps),
-            "brier":      brier(labels, ps),
-            "auc_early":  safe_auc(labels, ps),
-            "aupr_early": safe_aupr(labels, ps),
-        }
+        results["PRM"] = _static_metrics(labels, np.array(prm_scores_seed))
+
     return results
 
 
@@ -222,7 +219,8 @@ def main():
     if prm_scores is not None:
         variant_names.append("PRM")
 
-    metric_keys = ["auc_final", "aupr_final", "brier", "auc_early", "aupr_early"]
+    step_keys   = [f"auc_k{k}" for k in STEP_AUCS]
+    metric_keys = ["auc_final", "aupr_final", "brier", "auc_early", "aupr_early"] + step_keys
     all_results = {n: {m: [] for m in metric_keys} for n in variant_names}
 
     for seed in range(N_SEEDS):
@@ -233,16 +231,21 @@ def main():
                 for m in metric_keys:
                     all_results[name][m].append(res[name].get(m, float("nan")))
 
+    # ── print summary ──────────────────────────────────────────────────────────
+    step_header = "".join(f"  @{k:>2}" for k in STEP_AUCS)
     print(f"\n=== {tag} Eval Results (mean ± std, {N_SEEDS} seeds) ===")
-    print(f"{'Method':<12} {'AUC@final':>14} {'AUPR@final':>14} {'Brier':>12} {'AUC@early':>14}")
-    print("-" * 70)
+    print(f"{'Method':<12} {'AUC@final':>14} {'AUPR@final':>12} {'Brier':>10}{step_header}")
+    print("-" * (52 + 6 * len(STEP_AUCS)))
     for name in variant_names:
-        af  = np.array(all_results[name]["auc_final"])
-        apr = np.array(all_results[name]["aupr_final"])
-        br  = np.array(all_results[name]["brier"])
-        ae  = np.array(all_results[name]["auc_early"])
-        print(f"{name:<12} {af.mean():.3f}±{af.std():.3f}   {apr.mean():.3f}±{apr.std():.3f}  "
-              f"{br.mean():.3f}±{br.std():.3f}  {ae.mean():.3f}±{ae.std():.3f}")
+        af  = np.nanmean(all_results[name]["auc_final"])
+        af_s= np.nanstd(all_results[name]["auc_final"])
+        apr = np.nanmean(all_results[name]["aupr_final"])
+        br  = np.nanmean(all_results[name]["brier"])
+        step_vals = "".join(
+            f"  {np.nanmean(all_results[name][k]):.3f}" for k in step_keys
+        )
+        print(f"{name:<12} {af:.3f}±{af_s:.3f}   {apr:.3f}±{np.nanstd(all_results[name]['aupr_final']):.3f}  "
+              f"{br:.3f}±{np.nanstd(all_results[name]['brier']):.3f}{step_vals}")
 
     os.makedirs("tables", exist_ok=True)
     csv_path = os.path.join("tables", csv_name)

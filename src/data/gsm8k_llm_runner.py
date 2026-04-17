@@ -160,6 +160,7 @@ def run(model_name: str = DEFAULT_MODEL, n_problems: int = N_PROBLEMS_DEFAULT):
     )
 
     all_features, all_labels, all_lengths = [], [], []
+    all_questions, all_step_texts = [], []
 
     for idx in range(min(n_problems, len(dataset))):
         item     = dataset[idx]
@@ -242,6 +243,8 @@ def run(model_name: str = DEFAULT_MODEL, n_problems: int = N_PROBLEMS_DEFAULT):
         all_features.append(padded)
         all_labels.append(correct)
         all_lengths.append(T)
+        all_questions.append(item["question"])
+        all_step_texts.append(steps)
 
         if (idx + 1) % 20 == 0:
             acc = np.mean(all_labels) * 100
@@ -270,6 +273,10 @@ def run(model_name: str = DEFAULT_MODEL, n_problems: int = N_PROBLEMS_DEFAULT):
     np.save(os.path.join(OUT_DIR, "real_traces.npy"),        traces)
     np.save(os.path.join(OUT_DIR, "real_labels.npy"),        labels)
     np.save(os.path.join(OUT_DIR, "real_trace_lengths.npy"), lengths)
+    np.save(os.path.join(OUT_DIR, "real_questions.npy"),
+            np.array(all_questions, dtype=object), allow_pickle=True)
+    np.save(os.path.join(OUT_DIR, "real_step_texts.npy"),
+            np.array(all_step_texts, dtype=object), allow_pickle=True)
 
     print(f"\n[gsm8k_llm_runner] Saved {len(labels)} trajectories.")
     print(f"  Overall accuracy : {labels.mean()*100:.1f}%")

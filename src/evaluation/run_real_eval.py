@@ -13,6 +13,7 @@ from src.filters.lr_baseline  import LRBaseline, LRFullBaseline
 from src.evaluation.online_prediction import OnlineCorrectnessPredictor, OnlinePredictionRecorder
 from src.data.real_data_loader import RealDataLoader
 from src.data.math500_data_loader import Math500DataLoader
+from src.data import real_data_loader as _rdl_module
 
 try:
     from sklearn.metrics import roc_auc_score
@@ -58,7 +59,7 @@ def _select_noise_std(val_loader, base_dyn):
     return best_cfg
 
 
-def _eval_seed(seed, loader, base_dyn, sensors):
+def _eval_seed(seed, loader, base_dyn, sensors, prm_scores=None):
     rng = np.random.default_rng(seed)
     indices = rng.permutation(len(loader)).tolist()
     predictor = OnlineCorrectnessPredictor()
@@ -66,6 +67,7 @@ def _eval_seed(seed, loader, base_dyn, sensors):
     preds_rbpf, preds_ekf, preds_pf = [], [], []
     all_ys, labels = [], []
     mean_entropy_scores = []
+    prm_scores_seed = [] if prm_scores is not None else None
 
     for idx in indices:
         ys, label = loader.get_trajectory(idx)
@@ -75,6 +77,8 @@ def _eval_seed(seed, loader, base_dyn, sensors):
         labels.append(label)
         all_ys.append(ys)
         mean_entropy_scores.append(-float(np.mean(ys[:, 0])))
+        if prm_scores_seed is not None:
+            prm_scores_seed.append(float(prm_scores[idx]))
 
         rbpf = RBPF_SLDS(dyn=base_dyn, sensors=sensors, cfg=RBPFConfig(num_particles=PARTICLES))
         pf   = PF_SLDS(dyn=base_dyn,   sensors=sensors, cfg=PFConfig(num_particles=PARTICLES))
@@ -120,7 +124,7 @@ def _eval_seed(seed, loader, base_dyn, sensors):
 
     me_scores = np.array(mean_entropy_scores)
 
-    return {
+    results = {
         "RBPF":         {"auc_final": safe_auc(labels, _final(preds_rbpf)),  "auc_early": safe_auc(labels, _early(preds_rbpf, EARLY_K))},
         "EKF":          {"auc_final": safe_auc(labels, _final(preds_ekf)),   "auc_early": safe_auc(labels, _early(preds_ekf,  EARLY_K))},
         "PF":           {"auc_final": safe_auc(labels, _final(preds_pf)),    "auc_early": safe_auc(labels, _early(preds_pf,   EARLY_K))},
@@ -128,6 +132,10 @@ def _eval_seed(seed, loader, base_dyn, sensors):
         "LR-full":      {"auc_final": safe_auc(lr_labels, lr_full_probs),    "auc_early": safe_auc(lr_labels, lr_full_probs)},
         "MeanEntropy":  {"auc_final": safe_auc(labels, me_scores),           "auc_early": safe_auc(labels, me_scores)},
     }
+    if prm_scores_seed is not None:
+        ps = np.array(prm_scores_seed)
+        results["PRM"] = {"auc_final": safe_auc(labels, ps), "auc_early": safe_auc(labels, ps)}
+    return results
 
 
 def main():
@@ -158,12 +166,19 @@ def main():
     print(f"[run_real_eval] Selecting sensor noise_std ...")
     sensors = ReasoningSensors(_select_noise_std(val_loader, base_dyn))
 
+    prm_path = os.path.join(os.path.dirname(_rdl_module.__file__), "real_prm_scores.npy")
+    prm_scores = np.load(prm_path) if (args.dataset == "gsm8k" and os.path.exists(prm_path)) else None
+    if prm_scores is not None:
+        print(f"  PRM scores loaded: {len(prm_scores)} problems")
+
     variant_names = ["RBPF", "EKF", "PF", "LR-k5", "LR-full", "MeanEntropy"]
+    if prm_scores is not None:
+        variant_names.append("PRM")
     all_results = {n: {"auc_final": [], "auc_early": []} for n in variant_names}
 
     for seed in range(N_SEEDS):
         print(f"[run_real_eval] Seed {seed+1}/{N_SEEDS} ...")
-        res = _eval_seed(seed, loader, base_dyn, sensors)
+        res = _eval_seed(seed, loader, base_dyn, sensors, prm_scores=prm_scores)
         for name in variant_names:
             if name in res:
                 all_results[name]["auc_final"].append(res[name]["auc_final"])

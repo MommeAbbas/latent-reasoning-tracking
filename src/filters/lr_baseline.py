@@ -32,3 +32,24 @@ class LRBaseline:
     def predict(self, ys_list: List[np.ndarray]) -> np.ndarray:
         X = self._featurise(ys_list)
         return self.clf.predict_proba(X)[:, 1]
+
+
+class LRFullBaseline:
+    """LR on mean + std of each observation dimension over the full trajectory."""
+
+    def __init__(self, C: float = 1.0):
+        self.clf = LogisticRegression(C=C, max_iter=1000, random_state=42)
+
+    def _featurise(self, ys_list: List[np.ndarray]) -> np.ndarray:
+        rows = []
+        for ys in ys_list:
+            ys = np.asarray(ys, dtype=float)
+            rows.append(np.concatenate([np.mean(ys, axis=0), np.std(ys, axis=0)]))
+        return np.array(rows)
+
+    def fit(self, ys_list: List[np.ndarray], labels: np.ndarray) -> "LRFullBaseline":
+        self.clf.fit(self._featurise(ys_list), np.asarray(labels, dtype=int))
+        return self
+
+    def predict(self, ys_list: List[np.ndarray]) -> np.ndarray:
+        return self.clf.predict_proba(self._featurise(ys_list))[:, 1]

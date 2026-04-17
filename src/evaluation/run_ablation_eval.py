@@ -43,6 +43,7 @@ def run_ablation_seed(seed, true_dyn, sensors, predictor):
     preds = {name: [] for name in ["RBPF-Full", "RBPF-NoRot", "RBPF-2Mode", "PF", "EKF"]}
     labels_list = []
     all_ys = []
+    mean_entropy_scores = []
 
     X0 = np.array([0.2, 0.5, 0.8, 0.2, 0.1])
 
@@ -53,6 +54,7 @@ def run_ablation_seed(seed, true_dyn, sensors, predictor):
 
         ys = np.array([sensors.observe(xs[k + 1]) for k in range(T)])
         all_ys.append(ys)
+        mean_entropy_scores.append(-float(np.mean(ys[:, 0])))
 
         rbpf_full  = RBPF_SLDS(dyn=true_dyn,     sensors=sensors, cfg=RBPFConfig(num_particles=PARTICLES))
         rbpf_norot = RBPF_SLDS(dyn=no_rot_dyn,   sensors=sensors, cfg=RBPFConfig(num_particles=PARTICLES))
@@ -113,6 +115,12 @@ def run_ablation_seed(seed, true_dyn, sensors, predictor):
         "auc_early": safe_auc(labels[n_train:], lr_probs),
     }
 
+    me_scores = np.array(mean_entropy_scores)
+    results["MeanEntropy"] = {
+        "auc_final": safe_auc(labels, me_scores),
+        "auc_early": safe_auc(labels, me_scores),
+    }
+
     return results
 
 
@@ -120,7 +128,7 @@ def main():
     true_dyn, sensors = make_dynamics_and_sensors()
     predictor = OnlineCorrectnessPredictor()
 
-    variant_names = ["RBPF-Full", "RBPF-NoRot", "RBPF-2Mode", "PF", "EKF", "LR-k5"]
+    variant_names = ["RBPF-Full", "EKF", "RBPF-NoRot", "RBPF-2Mode", "MeanEntropy", "PF", "LR-k5"]
     all_results = {name: {"auc_final": [], "auc_early": []} for name in variant_names}
 
     for seed in range(N_SEEDS):

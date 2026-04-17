@@ -8,7 +8,7 @@ from src.simulation.sensors import SensorConfig, ReasoningSensors
 from src.filters.rbpf_slds  import RBPF_SLDS, RBPFConfig
 from src.filters.ekf_baseline import EKFBaseline, EKFConfig
 from src.filters.pf_baseline  import PF_SLDS, PFConfig
-from src.filters.lr_baseline  import LRBaseline
+from src.filters.lr_baseline  import LRBaseline, LRFullBaseline
 from src.evaluation.online_prediction import OnlineCorrectnessPredictor, OnlinePredictionRecorder
 from src.data.real_data_loader import RealDataLoader
 
@@ -63,6 +63,7 @@ def _eval_seed(seed, loader, base_dyn, sensors):
 
     preds_rbpf, preds_ekf, preds_pf = [], [], []
     all_ys, labels = [], []
+    mean_entropy_scores = []
 
     for idx in indices:
         ys, label = loader.get_trajectory(idx)
@@ -71,6 +72,7 @@ def _eval_seed(seed, loader, base_dyn, sensors):
 
         labels.append(label)
         all_ys.append(ys)
+        mean_entropy_scores.append(-float(np.mean(ys[:, 0])))
 
         rbpf = RBPF_SLDS(dyn=base_dyn, sensors=sensors, cfg=RBPFConfig(num_particles=PARTICLES))
         pf   = PF_SLDS(dyn=base_dyn,   sensors=sensors, cfg=PFConfig(num_particles=PARTICLES))
@@ -105,16 +107,24 @@ def _eval_seed(seed, loader, base_dyn, sensors):
         return np.array([p[min(k, len(p) - 1)] for p in pred_list])
 
     n_train = int(0.70 * len(labels))
-    lr = LRBaseline(k=EARLY_K + 1)
-    lr.fit(all_ys[:n_train], labels[:n_train])
-    lr_probs  = lr.predict(all_ys[n_train:])
-    lr_labels = labels[n_train:]
+    lr_k5 = LRBaseline(k=EARLY_K + 1)
+    lr_k5.fit(all_ys[:n_train], labels[:n_train])
+    lr_k5_probs = lr_k5.predict(all_ys[n_train:])
+    lr_labels   = labels[n_train:]
+
+    lr_full = LRFullBaseline()
+    lr_full.fit(all_ys[:n_train], labels[:n_train])
+    lr_full_probs = lr_full.predict(all_ys[n_train:])
+
+    me_scores = np.array(mean_entropy_scores)
 
     return {
-        "RBPF":  {"auc_final": safe_auc(labels, _final(preds_rbpf)), "auc_early": safe_auc(labels, _early(preds_rbpf, EARLY_K))},
-        "EKF":   {"auc_final": safe_auc(labels, _final(preds_ekf)),  "auc_early": safe_auc(labels, _early(preds_ekf,  EARLY_K))},
-        "PF":    {"auc_final": safe_auc(labels, _final(preds_pf)),   "auc_early": safe_auc(labels, _early(preds_pf,   EARLY_K))},
-        "LR-k5": {"auc_final": safe_auc(lr_labels, lr_probs),        "auc_early": safe_auc(lr_labels, lr_probs)},
+        "RBPF":         {"auc_final": safe_auc(labels, _final(preds_rbpf)),  "auc_early": safe_auc(labels, _early(preds_rbpf, EARLY_K))},
+        "EKF":          {"auc_final": safe_auc(labels, _final(preds_ekf)),   "auc_early": safe_auc(labels, _early(preds_ekf,  EARLY_K))},
+        "PF":           {"auc_final": safe_auc(labels, _final(preds_pf)),    "auc_early": safe_auc(labels, _early(preds_pf,   EARLY_K))},
+        "LR-k5":        {"auc_final": safe_auc(lr_labels, lr_k5_probs),      "auc_early": safe_auc(lr_labels, lr_k5_probs)},
+        "LR-full":      {"auc_final": safe_auc(lr_labels, lr_full_probs),    "auc_early": safe_auc(lr_labels, lr_full_probs)},
+        "MeanEntropy":  {"auc_final": safe_auc(labels, me_scores),           "auc_early": safe_auc(labels, me_scores)},
     }
 
 
@@ -133,7 +143,7 @@ def main():
     val_loader = RealDataLoader(split="held", n_eval=200)
     sensors = ReasoningSensors(_select_noise_std(val_loader, base_dyn))
 
-    variant_names = ["RBPF", "EKF", "PF", "LR-k5"]
+    variant_names = ["RBPF", "EKF", "PF", "LR-k5", "LR-full", "MeanEntropy"]
     all_results = {n: {"auc_final": [], "auc_early": []} for n in variant_names}
 
     for seed in range(N_SEEDS):

@@ -39,7 +39,7 @@ def _build_prm_input(question: str, steps: list) -> str:
 def run(model_name: str = DEFAULT_MODEL):
     try:
         import torch
-        from transformers import AutoTokenizer, AutoModelForCausalLM
+        from transformers import AutoTokenizer
     except ImportError:
         raise ImportError("pip install transformers torch accelerate")
 
@@ -57,8 +57,9 @@ def run(model_name: str = DEFAULT_MODEL):
     print(f"[prm_scorer] {N} problems loaded.")
 
     print(f"[prm_scorer] Loading PRM: {model_name}")
+    from transformers import AutoModel
     tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
-    model     = AutoModelForCausalLM.from_pretrained(
+    model     = AutoModel.from_pretrained(
         model_name,
         trust_remote_code=True,
         dtype=torch.float16,
@@ -80,29 +81,36 @@ def run(model_name: str = DEFAULT_MODEL):
         text   = _build_prm_input(question, steps)
         inputs = tokenizer(text, return_tensors="pt").to(model.device)
 
-        with torch.no_grad():
-            logits = model(**inputs).logits   # (1, seq_len, vocab)
-
-        input_ids = inputs["input_ids"][0]    # (seq_len,)
+        input_ids = inputs["input_ids"][0]
         sep_positions = (input_ids == sep_id).nonzero(as_tuple=True)[0]
 
         if len(sep_positions) == 0:
             scores[i] = 0.5
             continue
 
-        # Score at last separator position: P(good) via softmax over {good, bad} tokens
-        # Qwen2.5-Math-PRM uses token ids for "+" (good) and "-" (bad)
-        good_id = tokenizer.convert_tokens_to_ids("+")
-        bad_id  = tokenizer.convert_tokens_to_ids("-")
-        last_pos = sep_positions[-1].item()
-        step_logits = logits[0, last_pos, :]  # (vocab,)
+        with torch.no_grad():
+            output = model(**inputs)
 
-        good_logit = step_logits[good_id].item()
-        bad_logit  = step_logits[bad_id].item()
-        # Softmax over just the two tokens
-        import math
-        score = math.exp(good_logit) / (math.exp(good_logit) + math.exp(bad_logit))
-        scores[i] = float(score)
+        # Qwen2.5-Math-PRM returns per-token scores in output.scores or logits
+        # Shape: (1, seq_len, 1) or (1, seq_len, 2)
+        if hasattr(output, "scores"):
+            raw = output.scores  # (1, seq_len, num_labels)
+        else:
+            raw = output.logits
+
+        raw = raw.squeeze(0)  # (seq_len, num_labels)
+        last_pos = sep_positions[-1].item()
+        step_scores = raw[last_pos]  # (num_labels,)
+
+        if step_scores.shape[0] == 1:
+            # Single scalar — sigmoid to get probability
+            score = float(torch.sigmoid(step_scores[0]).item())
+        else:
+            # Two logits: index 1 = good
+            probs = torch.softmax(step_scores.float(), dim=-1)
+            score = float(probs[1].item())
+
+        scores[i] = score
 
         if (i + 1) % 20 == 0:
             print(f"  [{i+1}/{N}]  mean score so far: {scores[:i+1].mean():.3f}")

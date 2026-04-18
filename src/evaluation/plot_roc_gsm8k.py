@@ -134,8 +134,8 @@ def plot_publication_quality():
 
     output_dir = "figures"
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, "fig_roc_early_prediction.png")
-    plt.savefig(output_path, dpi=300)
+    output_path = os.path.join(output_dir, "fig_roc_early_prediction.pdf")
+    plt.savefig(output_path, format="pdf", bbox_inches="tight")
     print(f"\nSaved to {output_path}")
 
 
